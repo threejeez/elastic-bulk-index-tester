@@ -26,7 +26,7 @@ const docs = require(program.file)
 const esHost = program.host
 const esIndex = program.index
 const typeField = program.typeField
-const aliasName = program.aliasName
+const aliasName = program.alias
 const deleteFirst = program.deleteIndices
 const dumpPath = program.dumpBulks
 const recordsPerBulk = program.records
@@ -45,12 +45,12 @@ const defaultIndexSettings =  {
             number_of_replicas: 0,
             store: {
                 type: "niofs",
-            },
-            translog: {
-                sync_interval: "50s",
-                durability: "async",
-                flush_threshold_size: "5gb",
-            }
+            }//,
+            //translog: {
+            //    sync_interval: "50s",
+            //    durability: "async",
+            //    flush_threshold_size: "5gb",
+            //}
         }   
     }
 }
@@ -227,23 +227,23 @@ const doDump = (bulks, indices) => {
 }
 
 const makeSearchable = (indices) => {
-    console.log(indices)
-    Promise.all(indices, (index) => {
-        console.log(`updating index ${index}`)
-        return client.indices.putSettings(
+    console.log('Making indices searchable')
+    const eaches = Promise.each(indices, (index) => {
+        client.indices.putSettings({
             index,
-            endSettings
-        )
+            body: endSettings
+	})
     })
+    return [indices, eaches]
 }
 
 const createAlias = (indices) => {
-    if (aliasName && typeName) {
-        const index = indices.join(',')
-        return client.indices.putAlias({
-            index,
-            name: aliasName
-        })
+    if (aliasName && typeField) {
+        console.log(`Creating alias ${aliasName} with ${indices.length} indexes`)    
+	const index = indices.join(',')
+        return client.indices.deleteAlias({index, name: "_all"})
+		    .catch((e) => {console.log(JSON.stringify(e)); return true})
+		    .then(client.indices.putAlias({index, name: aliasName}))
     }
 }
 
@@ -256,7 +256,7 @@ createBuckets()
         const requests = generateRequestQueues(bulks)
         return Promise.all(requests).then(() => { return indices })
     })
-    .spread((indices) => {
+    .then((indices) => {
         const stopBulk = new Date()
         const totalBulkTimeMS = stopBulk - startBulk
         const totalBulkTimeS = totalBulkTimeMS / 1000
@@ -265,4 +265,4 @@ createBuckets()
         return indices
     })
     .then(makeSearchable)
-    .then(createAlias)
+    .spread(createAlias)
