@@ -16,6 +16,7 @@ program
     .option('-b, --dump-bulks <path>', 'Dump bulk index to directory')
     .option('-t, --type-field <field>', 'Type field from doc to be used as index name. This will create a separate index for each value for that field' )
     .option('-a, --alias <alias>', 'Create an alias for all the indices created using the -t option.')
+    .option('-p, --index-postfix', 'Autogenerate an index postfix')
     .parse(process.argv)
     .version('0.0.1')
 
@@ -32,9 +33,10 @@ const dumpPath = program.dumpBulks
 const recordsPerBulk = program.records
 const concurrency = program.concurrency
 const totalBulkRequests = Math.ceil(docs.length / recordsPerBulk)
+const indexPostfix = program.indexPostfix ? `_${shortid.generate()}` : ''
 const defaultBulkIndexStatement = {
     index: {
-        _index: esIndex, 
+        _index: esIndex + indexPostfix, 
         _type: '_doc'
     }
 }
@@ -136,10 +138,11 @@ const createBuckets = () => {
                     return defaultBulkIndexStatement
                 }
             
-                indices[typeFieldValue] = {}
+                indices[`${typeFieldValue}${indexPostfix}`] = {}
             
                 const indexStatement = JSON.parse(JSON.stringify(defaultBulkIndexStatement))
                 indexStatement.index._index = typeFieldValue
+
                 return indexStatement
             } else {
                 return defaultBulkIndexStatement
@@ -238,15 +241,12 @@ const makeSearchable = (indices) => {
 }
 
 const createAlias = (indices) => {
-	/*
     if (aliasName && typeField) {
         console.log(`Creating alias ${aliasName} with ${indices.length} indexes`)    
-	const index = indices.join(',')
-        return client.indices.deleteAlias({index, name: "_all"})
-		    .catch((e) => {console.log(JSON.stringify(e)); return true})
-		    .then(client.indices.putAlias({index, name: aliasName}))
+	    const index = indices.join(',')
+        return client.indices.putAlias({index, name: aliasName})
     }
-    */
+
 	return
 }
 
