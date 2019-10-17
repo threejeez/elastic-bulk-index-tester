@@ -112,7 +112,7 @@ const indexSetup = (indices) => {
                 })
             })
         }
-    } else {
+    } else if (deleteFirst) {
         console.log(esIndex)
         return client.indices.delete({index: esIndex, ignoreUnavailable: true})
             .then(() => client.indices.create({
@@ -238,6 +238,7 @@ const makeSearchable = (indices) => {
 }
 
 const createAlias = (indices) => {
+	/*
     if (aliasName && typeField) {
         console.log(`Creating alias ${aliasName} with ${indices.length} indexes`)    
 	const index = indices.join(',')
@@ -245,6 +246,8 @@ const createAlias = (indices) => {
 		    .catch((e) => {console.log(JSON.stringify(e)); return true})
 		    .then(client.indices.putAlias({index, name: aliasName}))
     }
+    */
+	return
 }
 
 createBuckets()
