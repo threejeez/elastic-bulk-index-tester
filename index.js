@@ -5,12 +5,17 @@ const fs = require('fs').promises
 const Promise = require('bluebird')
 const { Client } = require('@elastic/elasticsearch')
 const util = require('util');
+const randomString = require('randomstring')
+
+function hosts(value, previous) {
+  return previous.concat([value]);
+}
 
 program
     .option('-f, --file <file>', 'path to the input json file')
     .option('-r, --records <number>', 'records to use per bulk index', 500, parseInt)
     .option('-c, --concurrency <number>', 'number of concurrent index requests', 10, parseInt)
-    .option('-h, --host <hostname>', 'ES host')
+    .option('-h, --host <hostname>', 'ES host', hosts, [])
     .option('-i, --index <index>', `ES index to index docs to. Ignored and used as default if --type-field option is present but the field doesn't exist for that doc.`)
     .option('-d, --delete-indices', 'First delete all indices associated with all documents')
     .option('-b, --dump-bulks <path>', 'Dump bulk index to directory')
@@ -33,7 +38,13 @@ const dumpPath = program.dumpBulks
 const recordsPerBulk = program.records
 const concurrency = program.concurrency
 const totalBulkRequests = Math.ceil(docs.length / recordsPerBulk)
-const indexPostfix = program.indexPostfix ? `_${shortid.generate()}` : ''
+const indexPostfix = program.indexPostfix ? `_${randomString.generate({length: 6, capitalization: 'lowercase'})}` : ''
+
+const generatePostfix = () => {
+    return Math.floor(Math.random() * Math.floor(
+    u));
+}
+
 const defaultBulkIndexStatement = {
     index: {
         _index: esIndex + indexPostfix, 
@@ -87,11 +98,14 @@ const indexSetup = (indices) => {
             console.log(`Regenerating ${indices.length} indices`)
     
             return Promise.each(indices, (index) => {
+		    console.log(`Deleting index ${index}`)
                 return client.indices.delete({index, ignoreUnavailable: true})
             })
             .then(() => {
+		    console.log(`Creating ${indices.length} indices`)
                 let startIndexCreate = new Date()
                 return Promise.each(indices, (index) => {
+			console.log(`creating ${index}`)
                     return client.indices.create({
                             index,
                             body: defaultIndexSettings
@@ -124,6 +138,7 @@ const indexSetup = (indices) => {
     }
 }
 
+let numDocs = 0
 // Put each document into a bulk bucket with the required insert operations
 const createBuckets = () => {
     return new Promise((resolve, reject) => {
@@ -137,11 +152,12 @@ const createBuckets = () => {
                     console.log("Unknown eventType. Using default.")
                     return defaultBulkIndexStatement
                 }
-            
-                indices[`${typeFieldValue}${indexPostfix}`] = {}
+           
+		const indexName = `${typeFieldValue}${indexPostfix}`
+                indices[indexName] = {}
             
                 const indexStatement = JSON.parse(JSON.stringify(defaultBulkIndexStatement))
-                indexStatement.index._index = typeFieldValue
+                indexStatement.index._index = indexName
 
                 return indexStatement
             } else {
@@ -156,9 +172,9 @@ const createBuckets = () => {
                     return [indexStatement, doc]
                 })
 
-            process.stdout.write("-")
-
-            bulks.push(bucket)
+            //process.stdout.write("-")
+            numDocs = numDocs + bucket.length
+		bulks.push(bucket)
         }
         
         resolve([bulks, Object.keys(indices)])
@@ -173,6 +189,13 @@ const doBulk = (group, esClient) => {
             refresh: 'false'
         })
         .then((res) => {
+		console.log(res)
+	    if (res.body.errors) {
+		const items = res.body.items
+		items.forEach((item) => {
+			console.log(item)
+		})
+            }
             process.stdout.write(".")
         })
         .catch((e) => {
@@ -210,6 +233,7 @@ const generateRequestQueues = (bulks) => {
 }
 
 const doDump = (bulks, indices) => {
+	console.log(`Total docs: ${numDocs}`)
     if (dumpPath) {
         console.log(`Dumping bulk files to ${dumpPath}`)
 
@@ -232,6 +256,7 @@ const doDump = (bulks, indices) => {
 const makeSearchable = (indices) => {
     console.log('Making indices searchable')
     const eaches = Promise.each(indices, (index) => {
+	console.log(`${index} is searchable`)
         client.indices.putSettings({
             index,
             body: endSettings
