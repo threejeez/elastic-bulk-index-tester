@@ -16,7 +16,7 @@ program
     .option('-r, --records <number>', 'records to use per bulk index', 500, parseInt)
     .option('-c, --concurrency <number>', 'number of concurrent index requests', 10, parseInt)
     .option('-h, --host <hostname>', 'ES host', hosts, [])
-    .option('-i, --index <index>', `ES index to index docs to. Ignored and used as default if --type-field option is present but the field doesn't exist for that doc.`)
+    .option('-i, --index <index>', `ES index to index docs to. If -t is specified, used as index prefix for <type-field> AND as default index if the specified <type-field> doesn't exist for that doc.`)
     .option('-d, --delete-indices', 'First delete all indices associated with all documents')
     .option('-b, --dump-bulks <path>', 'Dump bulk index to directory')
     .option('-t, --type-field <field>', 'Type field from doc to be used as index name. This will create a separate index for each value for that field' )
