@@ -30,15 +30,15 @@ if (program.file === undefined) {
 }
 const docs = require(program.file)
 const esHost = program.host
-const esIndex = program.index
 const typeField = program.typeField
-const aliasName = program.alias
 const deleteFirst = program.deleteIndices
 const dumpPath = program.dumpBulks
 const recordsPerBulk = program.records
 const concurrency = program.concurrency
 const totalBulkRequests = Math.ceil(docs.length / recordsPerBulk)
 const indexPostfix = program.indexPostfix ? `_${randomString.generate({length: 6, capitalization: 'lowercase'})}` : ''
+const esIndex = program.index
+const aliasName = program.alias + indexPostfix
 
 const generatePostfix = () => {
     return Math.floor(Math.random() * Math.floor(
@@ -56,14 +56,15 @@ const defaultIndexSettings =  {
         index: {
             refresh_interval: -1,
             number_of_replicas: 0,
+	    number_of_shards: 5,
             store: {
                 type: "niofs",
-            }//,
-            //translog: {
-            //    sync_interval: "50s",
-            //    durability: "async",
-            //    flush_threshold_size: "5gb",
-            //}
+            },
+            translog: {
+//                sync_interval: "50s",
+                durability: "async",
+                flush_threshold_size: "2gb",
+            }
         }   
     }
 }
@@ -82,10 +83,10 @@ console.log("Total number of requests: ", totalBulkRequests)
 console.log("concurrent bulk requests: ", concurrency)
 console.log("Num docs: ", docs.length)
 console.log("ES Host: ", esHost)
-if (typeField != undefined) {
+if (typeField !== undefined) {
     console.log(`Creating index for every value in ${typeField} field`)
 } else {
-    console.log(`Indexing docs into one index: ${esIndex}`)
+    console.log(`Indexing docs into one index: ${esIndex}${indexPostfix}`)
 }
 
 // set up ES
@@ -122,23 +123,34 @@ const indexSetup = (indices) => {
             console.log(`Creating ${indices.length} indices`)
     
             return Promise.each(indices, (index) => {
-                return client.indices.create({
-                    index,
-                    body: defaultIndexSettings
-                })
+               // return client.indices.create({
+               //     index,
+               //     body: defaultIndexSettings
+               // })
             })
         }
     } else if (deleteFirst) {
-        console.log(esIndex)
-        return client.indices.delete({index: esIndex, ignoreUnavailable: true})
+        return client.indices.delete({index: esIndex + indexPostfix, ignoreUnavailable: true})
             .then(() => client.indices.create({
-                index: esIndex,
+                index: esIndex + indexPostfix,
                 body: defaultIndexSettings
             }))
+    } else {
+	    console.log('creating single index: ', esIndex + indexPostfix)
+	    return client.indices.exists({index: esIndex + indexPostfix})
+	    	.then((exists) => {
+			if (!exists.body) {
+				return client.indices.create({
+                			index: esIndex + indexPostfix,
+                			body: defaultIndexSettings
+            			})
+			} else {
+				return
+			}
+		})
     }
 }
 
-let numDocs = 0
 // Put each document into a bulk bucket with the required insert operations
 const createBuckets = () => {
     return new Promise((resolve, reject) => {
@@ -153,7 +165,7 @@ const createBuckets = () => {
                     return defaultBulkIndexStatement
                 }
            
-		const indexName = `${typeFieldValue}${indexPostfix}`
+		const indexName = `${esIndex}_${typeFieldValue}${indexPostfix}`
                 indices[indexName] = {}
             
                 const indexStatement = JSON.parse(JSON.stringify(defaultBulkIndexStatement))
@@ -173,7 +185,6 @@ const createBuckets = () => {
                 })
 
             //process.stdout.write("-")
-            numDocs = numDocs + bucket.length
 		bulks.push(bucket)
         }
         
@@ -181,6 +192,7 @@ const createBuckets = () => {
     })
 }
 
+let errors = []
 // create the bulk requests
 const doBulk = (group, esClient) => {
     return Promise.each(group, (body) => {
@@ -189,12 +201,8 @@ const doBulk = (group, esClient) => {
             refresh: 'false'
         })
         .then((res) => {
-		console.log(res)
 	    if (res.body.errors) {
-		const items = res.body.items
-		items.forEach((item) => {
-			console.log(item)
-		})
+		errors.push(res.body.items)
             }
             process.stdout.write(".")
         })
@@ -204,6 +212,24 @@ const doBulk = (group, esClient) => {
             process.exit()
         })
     }).then(() => { process.stdout.write("!") })
+}
+
+const printErrors = () => {
+	const errorCounts = {}
+	errors.forEach((items) => {
+		const errorItems = items.filter(item => item.index.error !== undefined)
+		errorItems.forEach(item => {
+			const errorType = item.index.error.type
+			const currentErrorCount = errorCounts[errorType] === undefined ? 0 : errorCounts[errorType]
+			errorCounts[errorType] = currentErrorCount + 1
+
+			if (errorType === 'es_rejected_execution_exception') {
+			//	console.log(item.index.error)
+			}
+		})
+	})
+
+	 console.log(JSON.stringify(errorCounts, null, 3))
 }
 
 // generate a queue of ES requests so that queues can be run individually serial, but in parallel to one another
@@ -233,7 +259,6 @@ const generateRequestQueues = (bulks) => {
 }
 
 const doDump = (bulks, indices) => {
-	console.log(`Total docs: ${numDocs}`)
     if (dumpPath) {
         console.log(`Dumping bulk files to ${dumpPath}`)
 
@@ -255,14 +280,28 @@ const doDump = (bulks, indices) => {
 
 const makeSearchable = (indices) => {
     console.log('Making indices searchable')
-    const eaches = Promise.each(indices, (index) => {
-	console.log(`${index} is searchable`)
-        client.indices.putSettings({
-            index,
-            body: endSettings
-	})
-    })
-    return [indices, eaches]
+
+	if (typeField) {
+    		const eaches = Promise.each(indices, (index) => {
+			console.log(`${index} is searchable`)
+        		return client.indices.putSettings({
+            			index,
+            			body: endSettings
+				})
+    		})
+
+    		return [indices, eaches]
+	} else {
+		const eaches = Promise.each([esIndex + indexPostfix], (index) => {
+			console.log(`${index} is searchable`)
+			return client.indices.putSettings({
+            			index,
+           			 body: endSettings
+        		})
+		})
+
+		return [indices, eaches]
+	}
 }
 
 const createAlias = (indices) => {
@@ -277,9 +316,9 @@ const createAlias = (indices) => {
 
 createBuckets()
     .spread(doDump)
-    .spread((bulks, indices) => {
-        return [bulks, indices, indexSetup(indices),]
-    })
+    //.spread((bulks, indices) => {
+    //    return [bulks, indices, indexSetup(indices),]
+    //})
     .spread((bulks, indices) => {
         const requests = generateRequestQueues(bulks)
         return Promise.all(requests).then(() => { return indices })
@@ -294,3 +333,4 @@ createBuckets()
     })
     .then(makeSearchable)
     .spread(createAlias)
+    .then(printErrors)
